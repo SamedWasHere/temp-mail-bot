@@ -8,16 +8,17 @@ import os
 # --- AYARLAR ---
 API_TOKEN = '8439073268:AAEfIABXx7bAU4qd0lcEEbFes3OoYUvtf2M'
 bot = telebot.TeleBot(API_TOKEN)
-API_URL = "https://www.1secmail.com/api/v1/"
 
-# SİTE ENGELİNİ AŞAN MASKE
+# Yeni ve Daha Kararlı Mail Servisi (SecMail)
+API_URL = "https://www.1secmail.com/api/v1/" 
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 }
 
 user_sessions = {}
 
-# --- RENDER WEB SUNUCUSU ---
+# --- RENDER WEBSERVER ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -34,6 +35,59 @@ def auto_check():
         try:
             for chat_id, data in list(user_sessions.items()):
                 mail = data['mail']
+                last_id = data['last_id']
+                u, d = mail.split("@")
+                
+                # Kontrol isteği
+                res = requests.get(f"{API_URL}?action=getMessages&login={u}&domain={d}", headers=HEADERS, timeout=10)
+                if res.status_code == 200:
+                    messages = res.json()
+                    if messages and messages[0]['id'] > last_id:
+                        msg_id = messages[0]['id']
+                        # İçerik okuma
+                        content = requests.get(f"{API_URL}?action=readMessage&login={u}&domain={d}&id={msg_id}", headers=HEADERS, timeout=10).json()
+                        
+                        output = (f"📩 *YENİ MAİL GELDİ!*\n\n"
+                                 f"👤 *Gönderen:* {content['from']}\n"
+                                 f"📌 *Konu:* {content['subject']}\n\n"
+                                 f"📝 *Mesaj:*\n{content['textBody']}")
+                        
+                        bot.send_message(chat_id, output, parse_mode='Markdown')
+                        user_sessions[chat_id]['last_id'] = msg_id
+        except:
+            pass
+        time.sleep(15)
+
+@bot.message_handler(commands=['start'])
+def welcome(message):
+    bot.reply_to(message, "🚀 *Bot Aktif!* \n\n/yeni yazarak hemen mail alabilirsin.", parse_mode='Markdown')
+
+@bot.message_handler(commands=['yeni'])
+def new_mail(message):
+    try:
+        # Yeni mail oluşturma
+        res = requests.get(f"{API_URL}?action=genAddrs&count=1", headers=HEADERS, timeout=15)
+        if res.status_code == 200:
+            mail_addr = res.json()[0]
+            user_sessions[message.chat.id] = {'mail': mail_addr, 'last_id': 0}
+            bot.reply_to(message, f"✅ *Yeni Mailin:* \n\n`{mail_addr}` \n\n_👆 Kopyalamak için üzerine dokun!_", parse_mode='Markdown')
+        else:
+            bot.reply_to(message, f"⚠️ Mail servisi geçici olarak meşgul (Kod: {res.status_code}). Lütfen 10 saniye sonra tekrar /yeni yaz.")
+    except Exception as e:
+        bot.reply_to(message, "❌ Bağlantı hatası oluştu, lütfen tekrar deneyin.")
+
+# --- ÇAKIŞMA VE BAŞLANGIÇ AYARI ---
+if __name__ == "__main__":
+    # Önceki tüm hatalı bağlantıları temizle
+    bot.remove_webhook()
+    time.sleep(1)
+    
+    # Sunucuyu ve döngüleri başlat
+    threading.Thread(target=run_web_server).start()
+    threading.Thread(target=auto_check, daemon=True).start()
+    
+    print("Bot başarıyla başlatıldı...")
+    bot.infinity_polling(skip_pending=True)
                 last_id = data['last_id']
                 u, d = mail.split("@")
                 
