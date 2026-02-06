@@ -4,7 +4,7 @@ import time
 import threading
 from flask import Flask
 import os
-import re # Kod yakalamak için gerekli kütüphane
+import re
 
 # --- AYARLAR ---
 API_TOKEN = '8439073268:AAEfIABXx7bAU4qd0lcEEbFes3OoYUvtf2M'
@@ -21,13 +21,40 @@ def run_web_server():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# --- AKILLI KOD YAKALAYICI FONKSİYONU ---
+# --- YENİ MAİL OLUŞTURMA FONKSİYONU (ORTAK) ---
+def create_new_account(chat_id):
+    """Hem komutla hem de otomatik olarak yeni mail oluşturur."""
+    try:
+        # Domain al
+        dom_res = requests.get(f"{BASE_URL}/domains").json()
+        domain = dom_res['hydra:member'][0]['domain']
+        
+        import random, string
+        user_prefix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        password = "PassWord123!"
+        email = f"{user_prefix}@{domain}"
+
+        # Hesap Oluştur
+        requests.post(f"{BASE_URL}/accounts", json={"address": email, "password": password})
+        
+        # Giriş Yap ve Token Al
+        token_res = requests.post(f"{BASE_URL}/token", json={"address": email, "password": password}).json()
+        token = token_res['token']
+        
+        # Kullanıcı verisini güncelle
+        if chat_id not in user_data:
+            user_data[chat_id] = {}
+        user_data[chat_id]['token'] = token
+        user_data[chat_id]['email'] = email
+        
+        bot.send_message(chat_id, f"✅ *Yeni Mailin Hazırlandı (Otomatik):* \n\n`{email}` \n\n_👆 Kopyalamak için üzerine dokun!_", parse_mode='Markdown')
+        return True
+    except:
+        bot.send_message(chat_id, "❌ Yeni mail otomatik oluşturulurken hata oluştu.")
+        return False
+
 def extract_verification_code(text):
-    """
-    Metin içindeki 6 veya 7 haneli, tamamı büyük harf ve rakamdan 
-    oluşan doğrulama kodlarını bulur.
-    """
-    # Regex: Kelime sınırları içinde, 6-7 karakterlik Büyük Harf ve Rakamlar
+    """Metin içindeki 6-7 haneli büyük harf/rakam kodlarını bulur."""
     code_pattern = r'\b[A-Z0-9]{6,7}\b'
     match = re.search(code_pattern, text)
     if match:
@@ -49,53 +76,35 @@ def auto_check():
                             full_msg = requests.get(f"{BASE_URL}/messages/{msg_id}", headers=headers).json()
                             
                             mail_content = full_msg['text']
-                            from_addr = full_msg['from']['address']
-                            subject = full_msg['subject']
+                            found_code = extract_verification_code(full_msg['subject']) or extract_verification_code(mail_content)
                             
-                            # Kodu Yakalamaya Çalış (Hem konudan hem içerikten bak)
-                            found_code = extract_verification_code(subject) or extract_verification_code(mail_content)
-                            
-                            # Standart mail bildirimi
+                            # Maili gönder
                             output = (f"📩 *YENİ MAİL!*\n\n"
-                                     f"👤 *Kimden:* {from_addr}\n"
-                                     f"📌 *Konu:* {subject}\n\n"
+                                     f"👤 *Kimden:* {full_msg['from']['address']}\n"
+                                     f"📌 *Konu:* {full_msg['subject']}\n\n"
                                      f"📝 *Mesaj:*\n{mail_content}")
-                            
                             bot.send_message(chat_id, output, parse_mode='Markdown')
 
-                            # EĞER KOD BULUNURSA: Ekstra kopyalanabilir mesaj at
                             if found_code:
-                                bot.send_message(chat_id, f"🔑 *Nubee AI Onay Kodun:*\n\n`{found_code}`\n\n_👆 Kopyalamak için koda dokun!_", parse_mode='Markdown')
+                                # 1. Kopyalanabilir kodu gönder
+                                bot.send_message(chat_id, f"🔑 *Onay Kodun:* \n\n`{found_code}`", parse_mode='Markdown')
+                                
+                                # 2. OTOMATİK YENİLEME: Kodu gönderdikten 2 saniye sonra yeni mail ver
+                                time.sleep(2)
+                                bot.send_message(chat_id, "🔄 Kod alındı, senin için yeni bir mail adresi hazırlıyorum...")
+                                create_new_account(chat_id)
                             
-                            # Okunan mesajı sil
                             requests.delete(f"{BASE_URL}/messages/{msg_id}", headers=headers)
         except: pass
         time.sleep(15)
 
 @bot.message_handler(commands=['yeni'])
-def new_mail(message):
-    try:
-        # Domain al
-        dom_res = requests.get(f"{BASE_URL}/domains").json()
-        domain = dom_res['hydra:member'][0]['domain']
-        
-        import random, string
-        user_prefix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        password = "PassWord123!"
-        email = f"{user_prefix}@{domain}"
-
-        requests.post(f"{BASE_URL}/accounts", json={"address": email, "password": password})
-        token_res = requests.post(f"{BASE_URL}/token", json={"address": email, "password": password}).json()
-        token = token_res['token']
-        
-        user_data[message.chat.id] = {'email': email, 'token': token}
-        bot.reply_to(message, f"✅ *Yeni Mailin:* \n\n`{email}` \n\n_👆 Dokun ve Kopyala!_", parse_mode='Markdown')
-    except:
-        bot.reply_to(message, "❌ Mail oluşturulamadı.")
+def manual_new_mail(message):
+    create_new_account(message.chat.id)
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "🤖 Nubee AI Akıllı Botu Hazır!\n\n📧 /yeni yazarak mail alabilirsin. Onay kodu gelince onu senin için ayıklayacağım.")
+    bot.reply_to(message, "🤖 *Tam Otomatik Bot Hazır!*\n\n1. /yeni ile ilk mailini al.\n2. Kod gelince ben kodu ayıklayıp sana vereceğim.\n3. Ardından hemen yeni bir mail adresi oluşturacağım!", parse_mode='Markdown')
 
 if __name__ == "__main__":
     bot.remove_webhook()
