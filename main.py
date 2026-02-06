@@ -6,11 +6,13 @@ from flask import Flask
 import os
 
 # --- AYARLAR ---
+# Güncel Token'ın
 API_TOKEN = '8439073268:AAEfIABXx7bAU4qd0lcEEbFes3OoYUvtf2M'
 bot = telebot.TeleBot(API_TOKEN)
+
+# Yeni Mail Servisi (SecMail)
 API_URL = "https://www.1secmail.com/api/v1/"
 
-# Tarayıcı gibi görünmek için maske
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 }
@@ -42,7 +44,6 @@ def auto_check():
                     messages = res.json()
                     if messages and messages[0]['id'] > last_id:
                         msg_id = messages[0]['id']
-                        # İçeriği okuma
                         content = requests.get(f"{API_URL}?action=readMessage&login={u}&domain={d}&id={msg_id}", headers=HEADERS, timeout=10).json()
                         
                         output = (f"📩 *YENİ MAİL GELDİ!*\n\n"
@@ -64,19 +65,20 @@ def welcome(message):
 @bot.message_handler(commands=['yeni'])
 def new_mail(message):
     try:
+        # Yeni mail oluşturma isteği
         res = requests.get(f"{API_URL}?action=genAddrs&count=1", headers=HEADERS, timeout=15)
         if res.status_code == 200:
             mail_addr = res.json()[0]
             user_sessions[message.chat.id] = {'mail': mail_addr, 'last_id': 0}
             bot.reply_to(message, f"✅ *Yeni Mailin:* \n\n`{mail_addr}`", parse_mode='Markdown')
         else:
-            bot.reply_to(message, "⚠️ Mail servisi şu an meşgul, lütfen tekrar dene.")
+            bot.reply_to(message, f"⚠️ Mail servisi şu an yoğun (Kod: {res.status_code}), lütfen biraz bekleyip tekrar deneyin.")
     except:
         bot.reply_to(message, "❌ Bağlantı hatası oluştu.")
 
 # --- BAŞLATMA ---
 if __name__ == "__main__":
-    # Eski bağlantıları (409 hatasını) temizler
+    # Loglardaki o meşhur 409 çakışmasını temizler
     bot.remove_webhook()
     time.sleep(1)
     
