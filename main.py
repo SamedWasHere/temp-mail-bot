@@ -6,85 +6,73 @@ from flask import Flask
 import os
 
 # --- AYARLAR ---
-# Güncel Token'ın
 API_TOKEN = '8439073268:AAEfIABXx7bAU4qd0lcEEbFes3OoYUvtf2M'
 bot = telebot.TeleBot(API_TOKEN)
+BASE_URL = "https://api.mail.tm"
 
-# Yeni Mail Servisi (SecMail)
-API_URL = "https://www.1secmail.com/api/v1/"
+user_accounts = {} # {chat_id: {'email': '...', 'token': '...', 'id': '...'}}
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-}
-
-user_sessions = {}
-
-# --- RENDER WEB SUNUCUSU ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "Bot Aktif!"
+def home(): return "Bot Aktif!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# --- MAİL KONTROL DÖNGÜSÜ ---
+# --- MAİL FONKSİYONLARI ---
+def get_domain():
+    res = requests.get(f"{BASE_URL}/domains").json()
+    return res['hydra:member'][0]['domain']
+
 def auto_check():
     while True:
         try:
-            for chat_id, data in list(user_sessions.items()):
-                mail = data['mail']
-                last_id = data['last_id']
-                u, d = mail.split("@")
+            for chat_id, data in list(user_accounts.items()):
+                headers = {"Authorization": f"Bearer {data['token']}"}
+                # Mesajları kontrol et
+                msgs = requests.get(f"{BASE_URL}/messages", headers=headers).json()
                 
-                res = requests.get(f"{API_URL}?action=getMessages&login={u}&domain={d}", headers=HEADERS, timeout=10)
-                if res.status_code == 200:
-                    messages = res.json()
-                    if messages and messages[0]['id'] > last_id:
-                        msg_id = messages[0]['id']
-                        content = requests.get(f"{API_URL}?action=readMessage&login={u}&domain={d}&id={msg_id}", headers=HEADERS, timeout=10).json()
+                if msgs['hydra:member']:
+                    for msg in msgs['hydra:member']:
+                        msg_id = msg['id']
+                        # Daha önce okunmamışsa içeriği çek
+                        full_msg = requests.get(f"{BASE_URL}/messages/{msg_id}", headers=headers).json()
                         
-                        output = (f"📩 *YENİ MAİL GELDİ!*\n\n"
-                                 f"👤 *Gönderen:* {content['from']}\n"
-                                 f"📌 *Konu:* {content['subject']}\n\n"
-                                 f"📝 *Mesaj:*\n{content['textBody']}")
+                        output = (f"📩 *YENİ MAİL!*\n\n"
+                                 f"👤 *Kimden:* {full_msg['from']['address']}\n"
+                                 f"📌 *Konu:* {full_msg['subject']}\n\n"
+                                 f"📝 *Mesaj:*\n{full_msg['text']}")
                         
                         bot.send_message(chat_id, output, parse_mode='Markdown')
-                        user_sessions[chat_id]['last_id'] = msg_id
-        except:
-            pass
+                        # Okunan mesajı sil ki tekrar gelmesin
+                        requests.delete(f"{BASE_URL}/messages/{msg_id}", headers=headers)
+        except: pass
         time.sleep(15)
-
-# --- BOT KOMUTLARI ---
-@bot.message_handler(commands=['start'])
-def welcome(message):
-    bot.reply_to(message, "🚀 *Bot Yayında!* \n\n/yeni yazarak mail alabilirsin.", parse_mode='Markdown')
 
 @bot.message_handler(commands=['yeni'])
 def new_mail(message):
     try:
-        # Yeni mail oluşturma isteği
-        res = requests.get(f"{API_URL}?action=genAddrs&count=1", headers=HEADERS, timeout=15)
-        if res.status_code == 200:
-            mail_addr = res.json()[0]
-            user_sessions[message.chat.id] = {'mail': mail_addr, 'last_id': 0}
-            bot.reply_to(message, f"✅ *Yeni Mailin:* \n\n`{mail_addr}`", parse_mode='Markdown')
-        else:
-            bot.reply_to(message, f"⚠️ Mail servisi şu an yoğun (Kod: {res.status_code}), lütfen biraz bekleyip tekrar deneyin.")
-    except:
-        bot.reply_to(message, "❌ Bağlantı hatası oluştu.")
+        domain = get_domain()
+        import random, string
+        user = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        password = "PassWord123!"
+        email = f"{user}@{domain}"
 
-# --- BAŞLATMA ---
+        # Hesap Oluştur
+        requests.post(f"{BASE_URL}/accounts", json={"address": email, "password": password})
+        
+        # Token Al (Giriş Yap)
+        token_res = requests.post(f"{BASE_URL}/token", json={"address": email, "password": password}).json()
+        token = token_res['token']
+        
+        user_accounts[message.chat.id] = {'email': email, 'token': token}
+        bot.reply_to(message, f"✅ *Yeni Mailin:* \n\n`{email}` \n\n_👆 Üzerine dokunarak kopyalayabilirsin._", parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, "❌ Yeni mail oluşturulamadı. Lütfen tekrar dene.")
+
 if __name__ == "__main__":
-    # Loglardaki o meşhur 409 çakışmasını temizler
     bot.remove_webhook()
-    time.sleep(1)
-    
-    # Thread'leri başlat
     threading.Thread(target=run_web_server).start()
     threading.Thread(target=auto_check, daemon=True).start()
-    
-    print("Bot başarıyla başlatıldı...")
     bot.infinity_polling(skip_pending=True)
