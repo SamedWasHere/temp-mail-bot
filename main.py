@@ -6,7 +6,7 @@ from flask import Flask
 import os
 
 # --- AYARLAR ---
-API_TOKEN = '8439073268:AAFI8D407_VPDgLC726N25kRRPg_Qm2cnMw'
+API_TOKEN = '8439073268:AAEfIABXx7bAU4qd0lcEEbFes3OoYUvtf2M'
 bot = telebot.TeleBot(API_TOKEN)
 API_URL = "https://www.1secmail.com/api/v1/"
 
